@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Data.TextualBytes
     ( -- * ByteString tagged with encodings.
@@ -18,6 +19,8 @@ module Data.TextualBytes
     ) where
 
 import Data.Data
+import Control.DeepSeq
+import GHC.Generics
 import Data.Typeable
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict)
@@ -36,7 +39,9 @@ import Data.Proxy
 import Data.TextualBytes.Encoding
 
 newtype TextualBytes a = TextualBytes { getBytes :: ByteString }
-    deriving (Eq, Ord, Read, Show, Data, Typeable)
+    deriving (Eq, Ord, Read, Show, Data, Typeable, Generic)
+
+instance NFData (TextualBytes a)
 
 validate :: TextualEncoding a => TextualBytes a -> Int
 validate tbs = I# (go 0# 0#)
@@ -59,7 +64,7 @@ decodeLenient = decodeInternal False
 decodeThrow :: TextualEncoding a => TextualBytes a -> String
 decodeThrow = decodeInternal True
 
-encode :: forall e. UnicodeEncoding e => String -> TextualBytes e
+encode :: forall e. TextualEncoding e => String -> TextualBytes e
 encode cs =
     let lbs = toLazyByteString $ primMapListBounded (encodeChar (Proxy :: Proxy e)) cs
     in TextualBytes (toStrict lbs)

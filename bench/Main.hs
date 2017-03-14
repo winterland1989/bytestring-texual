@@ -19,7 +19,6 @@ main = do
             [ bench "text" $ nf (T.unpack . T.decodeUtf8) bs
             , bench "text-stream" $ nf (TF.unstreamList . TF.streamUtf8 TE.lenientDecode) bs
             , bench "texualBytes" $ nf (TB.decodeLenient) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
-            , bench "texualBytes-packed" $ nf (TB.encode . TB.decodeLenient) (TB.TextualBytes bs)
 
             ]
         , bgroup "map utf-8"
