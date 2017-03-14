@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
     exposed-modules:    Data.TextualBytes.Encoding
+                        Data.TextualBytes
 
     -- other-modules:       
     -- other-extensions:    
@@ -26,3 +27,16 @@ library
 
     -- hs-source-dirs:      
     default-language:    Haskell2010
+
+benchmark bench
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    hs-source-dirs: bench
+    default-language:    Haskell2010
+    build-depends:        base
+                    ,   bytestring-textual
+                    ,   bytestring
+                    ,   text
+                    ,   criterion >= 1.0.2.0
+
+    ghc-options: -O2

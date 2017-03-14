@@ -9,12 +9,12 @@ import GHC.Types
 import Data.ByteString.Builder.Prim
 
 class TextualEncoding a where
-    validate :: p a -> Addr# -> Int# -> Int#
-    decode :: p a -> Addr# -> Int# -> (# Char#, Int# #)
+    validateChar :: p a -> Addr# -> Int# -> Int#
+    decodeChar :: p a -> Addr# -> Int# -> (# Char#, Int# #)
     decodeEdge :: p a -> Addr# -> Int# -> Addr# -> (# Char#, Int# #)
 
 class TextualEncoding a => UnicodeEncoding a where
-    encode :: p a -> BoundedPrim Char
+    encodeChar :: p a -> BoundedPrim Char
 
 between :: Word#               -- ^ byte to check
         -> Word#               -- ^ lower bound
@@ -25,18 +25,21 @@ between x y z = isTrue# (x `geWord#` y) && isTrue# (x `leWord#` z)
 
 data ASCII
 instance TextualEncoding ASCII where
-    validate _ _ _ = 1#
-    {-# INLINE validate #-}
-    decode _ addr idx = (# indexCharOffAddr# addr idx, 1# #)
-    {-# INLINE decode #-}
+    {-# INLINEABLE validateChar #-}
+    validateChar _ _ _ = 1#
+    {-# INLINEABLE decodeChar #-}
+    decodeChar _ addr idx = (# indexCharOffAddr# addr idx, 1# #)
+    {-# INLINEABLE decodeEdge #-}
     decodeEdge _ addr idx _ = (# indexCharOffAddr# addr idx, 0# #)
-    {-# INLINE decodeEdge #-}
 
 --------------------------------------------------------------------------------
 
 data UTF8
 instance TextualEncoding UTF8 where
-    validate _ addr idx =
+    {-# INLINEABLE validateChar #-}
+    -- Reference: https://howardhinnant.github.io/utf_summary.html
+    --
+    validateChar _ addr idx =
         case cnt of
             0# -> 1#
             1# ->
@@ -86,7 +89,8 @@ instance TextualEncoding UTF8 where
             !(Table utf8HeadTable#) = utf8HeadTable
             !cnt = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
 
-    decode _ addr idx =
+    {-# INLINEABLE decodeChar #-}
+    decodeChar _ addr idx =
         case cnt of
             0# -> (# chr# (word2Int# x1), 1# #)
             1# ->
@@ -139,7 +143,6 @@ instance TextualEncoding UTF8 where
                 or# (uncheckedShiftL# (and# x1 0x1f##) 6#)
                     (and# x2 0x3f##)
                 ))
-
             chr3 x1 x2 x3 = chr# (word2Int# (
                 or# (uncheckedShiftL# (and# x1 0xf##) 12#)
                     (or# (uncheckedShiftL# (and# x2 0x3f##) 6#)
@@ -172,5 +175,9 @@ utf8HeadTable = Table
     \\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\
     \\x03\x03\x03\x03\x03\x03\x03\x03\xff\xff\xff\xff\xff\xff\xff\xff"#
 {-# NOINLINE utf8HeadTable #-}
+
+instance UnicodeEncoding UTF8 where
+    {-# INLINE encodeChar #-}
+    encodeChar _ = charUtf8
 
 --------------------------------------------------------------------------------
