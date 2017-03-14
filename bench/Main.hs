@@ -17,11 +17,16 @@ main = do
     defaultMain
         [ bgroup "decode utf-8"
             [ bench "text" $ nf (T.unpack . T.decodeUtf8) bs
+            , bench "text-packed" $ nf (T.decodeUtf8) bs
             , bench "text-stream" $ nf (TF.unstreamList . TF.streamUtf8 TE.lenientDecode) bs
             , bench "texualBytes" $ nf (TB.decodeLenient) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
-            , bench "texualBytes-packed" $ nf (TB.encode . TB.decodeLenient) (TB.TextualBytes bs)
+            , bench "texualBytes-packed" $ nf
+                ((TB.encode :: String -> TB.TextualBytes TB.UTF8 )
+                .(TB.decodeLenient :: TB.TextualBytes TB.UTF8 -> String))
+                (TB.TextualBytes bs)
 
             ]
+        {-
         , bgroup "map utf-8"
             [ bench "text" $ nf (T.length . T.map toUpper . T.decodeUtf8) bs
             , bench "texualBytes" $ nf (sum . map fromEnum . TB.decodeLenient) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
@@ -31,4 +36,5 @@ main = do
             [ bench "text" $ nf (T.length . T.decodeUtf8) bs
             , bench "texualBytes" $ nf (TB.validate) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
             ]
+        -}
         ]

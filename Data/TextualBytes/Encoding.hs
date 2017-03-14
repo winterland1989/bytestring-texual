@@ -8,12 +8,24 @@ import GHC.Prim
 import GHC.Types
 import Data.ByteString.Builder.Prim
 
+-- | A type class for texual decode/encode.
+--
 class TextualEncoding a where
-    validateChar :: p a -> Addr# -> Int# -> Int#
-    decodeChar :: p a -> Addr# -> Int# -> (# Char#, Int# #)
-    decodeEdge :: p a -> Addr# -> Int# -> Addr# -> (# Char#, Int# #)
+    -- | peek a 'Char#' from given 'Addr#' and index, return both the 'Char#'
+    -- and the advance offset in bytes on successful decoding, (# '0'#, 0# #) otherwise.
+    --
+    decodeChar :: p a
+               -> Addr#  -- current chunk address
+               -> Int#   -- current chunk length
+               -> Addr#  -- next chunk address
+               -> Int#   -- decoding index
+               -> (# Char#, Int# #)
 
-class TextualEncoding a => UnicodeEncoding a where
+    -- | poke 'Char' using 'BoundedPrim'.
+    --
+    -- NOTE: Some encodings(ASCII for example) can't encode full range of a 'Char',
+    -- truncate if that happens.
+    --
     encodeChar :: p a -> BoundedPrim Char
 
 between :: Word#               -- ^ byte to check
@@ -25,81 +37,28 @@ between x y z = isTrue# (x `geWord#` y) && isTrue# (x `leWord#` z)
 
 data ASCII
 instance TextualEncoding ASCII where
-    {-# INLINEABLE validateChar #-}
-    validateChar _ _ _ = 1#
-    {-# INLINEABLE decodeChar #-}
-    decodeChar _ addr idx = (# indexCharOffAddr# addr idx, 1# #)
-    {-# INLINEABLE decodeEdge #-}
-    decodeEdge _ addr idx _ = (# indexCharOffAddr# addr idx, 0# #)
+    {-# INLINE decodeChar #-}
+    decodeChar _ addr len next idx = (# indexCharOffAddr# addr idx, 1# #)
 
 --------------------------------------------------------------------------------
 
 data UTF8
 instance TextualEncoding UTF8 where
-    {-# INLINEABLE validateChar #-}
-    -- Reference: https://howardhinnant.github.io/utf_summary.html
-    --
-    validateChar _ addr idx =
+    {-# INLINE decodeChar #-}
+    decodeChar _ addr len next idx =
         case cnt of
-            0# -> 1#
+            0# ->
+                let !x1  = indexWord8OffAddr# addr idx
+                in (# chr# (word2Int# x1), 1# #)
             1# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                in if between x1 0xC2## 0xDF## && between x2 0x80## 0xBF##
-                    then 2#
-                    else 0#
-            2# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
-                in if isTrue# (x1 `eqWord#` 0xE0##) &&
-                        between x2 0xA0## 0xBF## &&
-                        between x3 0x80## 0xBF##
-                    || between x1 0xE1## 0xEC## &&
-                        between x2 0x80## 0xBF## &&
-                        between x3 0x80## 0xBF##
-                    || isTrue# (x1 `eqWord#` 0xED##) &&
-                        between x2 0x80## 0x9F## &&
-                        between x3 0x80## 0xBF##
-                    || between x1 0xEE## 0xEF## &&
-                        between x2 0x80## 0xBF## &&
-                        between x3 0x80## 0xBF##
-                    then 3#
-                    else 0#
-            3# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
-                    !x4 = indexWord8OffAddr# addr (idx +# 3#)
-                in if isTrue# (x1 `eqWord#` 0xF0##) &&
-                        between x2 0x90## 0xBF## &&
-                        between x3 0x80## 0xBF## &&
-                        between x4 0x80## 0xBF##
-                    || between x1 0xF1## 0xF3## &&
-                        between x2 0x80## 0xBF## &&
-                        between x3 0x80## 0xBF## &&
-                        between x4 0x80## 0xBF##
-                    || isTrue# (x1 `eqWord#` 0xF4##) &&
-                        between x2 0x80## 0x8F## &&
-                        between x3 0x80## 0xBF## &&
-                        between x4 0x80## 0xBF##
-                    then 4#
-                    else 0#
-
-            _  -> 0#
-
-      where !x1  = indexWord8OffAddr# addr idx
-            !(Table utf8HeadTable#) = utf8HeadTable
-            !cnt = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
-
-    {-# INLINEABLE decodeChar #-}
-    decodeChar _ addr idx =
-        case cnt of
-            0# -> (# chr# (word2Int# x1), 1# #)
-            1# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
                 in if between x1 0xC2## 0xDF## && between x2 0x80## 0xBF##
                     then (# chr2 x1 x2, 2# #)
                     else (# '\0'#, 0# #)
             2# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
                     !x3 = indexWord8OffAddr# addr (idx +# 2#)
                 in if isTrue# (x1 `eqWord#` 0xE0##) &&
                         between x2 0xA0## 0xBF## &&
@@ -116,7 +75,54 @@ instance TextualEncoding UTF8 where
                     then (# chr3 x1 x2 x3, 3# #)
                     else (# '\0'#, 0# #)
             3# ->
-                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
+                    !x4 = indexWord8OffAddr# addr (idx +# 3#)
+                in if isTrue# (x1 `eqWord#` 0xF0##) &&
+                        between x2 0x90## 0xBF## &&
+                        between x3 0x80## 0xBF## &&
+                        between x4 0x80## 0xBF##
+                    || between x1 0xF1## 0xF3## &&
+                        between x2 0x80## 0xBF## &&
+                        between x3 0x80## 0xBF## &&
+                        between x4 0x80## 0xBF##
+                    || isTrue# (x1 `eqWord#` 0xF4##) &&
+                        between x2 0x80## 0x8F## &&
+                        between x3 0x80## 0xBF## &&
+                        between x4 0x80## 0xBF##
+                    then (# chr4 x1 x2 x3 x4, 4# #)
+                    else (# '\0'#, 0# #)
+            0xEF# -> (# '\0'#, -1# #)
+            0xFF# -> (# '\0'#, 0# #)
+            --
+            -1# ->
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                in if between x1 0xC2## 0xDF## && between x2 0x80## 0xBF##
+                    then (# chr2 x1 x2, 2# #)
+                    else (# '\0'#, 0# #)
+            -2# ->
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
+                in if isTrue# (x1 `eqWord#` 0xE0##) &&
+                        between x2 0xA0## 0xBF## &&
+                        between x3 0x80## 0xBF##
+                    || between x1 0xE1## 0xEC## &&
+                        between x2 0x80## 0xBF## &&
+                        between x3 0x80## 0xBF##
+                    || isTrue# (x1 `eqWord#` 0xED##) &&
+                        between x2 0x80## 0x9F## &&
+                        between x3 0x80## 0xBF##
+                    || between x1 0xEE## 0xEF## &&
+                        between x2 0x80## 0xBF## &&
+                        between x3 0x80## 0xBF##
+                    then (# chr3 x1 x2 x3, 3# #)
+                    else (# '\0'#, 0# #)
+            -3# ->
+                let !x1  = indexWord8OffAddr# addr idx
+                    !x2 = indexWord8OffAddr# addr (idx +# 1#)
                     !x3 = indexWord8OffAddr# addr (idx +# 2#)
                     !x4 = indexWord8OffAddr# addr (idx +# 3#)
                 in if isTrue# (x1 `eqWord#` 0xF0##) &&
@@ -134,11 +140,19 @@ instance TextualEncoding UTF8 where
                     then (# chr4 x1 x2 x3 x4, 4# #)
                     else (# '\0'#, 0# #)
 
-            _  -> (# '\0'#, 0# #)
-
-      where !x1  = indexWord8OffAddr# addr idx
+          where
             !(Table utf8HeadTable#) = utf8HeadTable
-            !cnt = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
+            !cnt = case idx <# len of
+                1# ->
+                    let !x1  = indexWord8OffAddr# addr idx
+                        !c = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
+                    in case (c +# idx) <# len of
+                        1# -> c
+                        0# -> case next `eqAddr#` nullAddr# of
+                            0# -> 0xEF#
+                            1# -> len -# idx -# c
+                0# -> 0xEF#
+
             chr2 x1 x2 = chr# (word2Int# (
                 or# (uncheckedShiftL# (and# x1 0x1f##) 6#)
                     (and# x2 0x3f##)
@@ -154,6 +168,9 @@ instance TextualEncoding UTF8 where
                         (or# (uncheckedShiftL# (and# x3 0x3f##) 6#)
                             (and# x4 0x3f##)))
                 ))
+
+    {-# INLINE encodeChar #-}
+    encodeChar _ = charUtf8
 
 data Table = Table Addr#
 utf8HeadTable :: Table
@@ -175,9 +192,5 @@ utf8HeadTable = Table
     \\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\
     \\x03\x03\x03\x03\x03\x03\x03\x03\xff\xff\xff\xff\xff\xff\xff\xff"#
 {-# NOINLINE utf8HeadTable #-}
-
-instance UnicodeEncoding UTF8 where
-    {-# INLINE encodeChar #-}
-    encodeChar _ = charUtf8
 
 --------------------------------------------------------------------------------

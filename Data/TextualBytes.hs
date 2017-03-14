@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Data.TextualBytes
     ( -- * ByteString tagged with encodings.
@@ -17,8 +18,10 @@ module Data.TextualBytes
     , UTF8
     ) where
 
+import Control.DeepSeq
 import Data.Data
 import Data.Typeable
+import GHC.Generics
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict)
 import Data.ByteString.Builder
@@ -36,15 +39,17 @@ import Data.Proxy
 import Data.TextualBytes.Encoding
 
 newtype TextualBytes a = TextualBytes { getBytes :: ByteString }
-    deriving (Eq, Ord, Read, Show, Data, Typeable)
+    deriving (Eq, Ord, Read, Show, Data, Typeable, Generic)
+
+instance NFData (TextualBytes a)
 
 validate :: TextualEncoding a => TextualBytes a -> Int
 validate tbs = I# (go 0# 0#)
   where
     !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
-    dec = validateChar tbs (addr `plusAddr#` off)
+    dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
     go i acc =
-        let l = dec i
+        let !(# _, l #) = dec i
             i' = i +# l
         in case i' <# len of
             1# -> case l of
@@ -59,10 +64,17 @@ decodeLenient = decodeInternal False
 decodeThrow :: TextualEncoding a => TextualBytes a -> String
 decodeThrow = decodeInternal True
 
-encode :: forall e. UnicodeEncoding e => String -> TextualBytes e
+encode :: forall e. TextualEncoding e => String -> TextualBytes e
 encode cs =
     let lbs = toLazyByteString $ primMapListBounded (encodeChar (Proxy :: Proxy e)) cs
     in TextualBytes (toStrict lbs)
+{-# INLINE encode #-}
+
+{-
+transcode :: (forall e1. TextualEncoding e1, TextualEncoding e2)
+          => TextualBytes e1 -> TextualBytes e2
+transcode t1 t2 =
+-}
 
 --------------------------------------------------------------------------------
 
@@ -70,15 +82,13 @@ decodeInternal :: TextualEncoding a => Bool -> TextualBytes a -> String
 decodeInternal thw tbs = go 0#
   where
     !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
-    dec = decodeChar tbs (addr `plusAddr#` off)
+    dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
     go i =
         let (# chr, l #) = dec i
-            i' = i +# l
-        in case i' <# len of
-            1# -> case l of
-                0# -> if thw then error $
-                                "Data.TextualBytes.decodeInternal: can't decode byte at " ++ show (I# i)
-                             else '\xfffd' : go i'
-                _ -> C# chr : go i'
-            0# -> [C# chr]
+        in case l of
+            0# -> if thw then error $
+                            "Data.TextualBytes.decodeInternal: can't decode byte at " ++ show (I# i)
+                         else '\xfffd' : go (i +# 1#)
+            -1# -> [C# chr]
+            _ -> C# chr : go (i +# l)
 {-# INLINE decodeInternal #-}
