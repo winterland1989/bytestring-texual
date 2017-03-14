@@ -12,13 +12,14 @@ import Data.ByteString.Builder.Prim
 --
 class TextualEncoding a where
     -- | peek a 'Char#' from given 'Addr#' and index, return both the 'Char#'
-    -- and the advance offset in bytes on successful decoding, (# '0'#, 0# #) otherwise.
+    -- and the advance offset in bytes on successful decoding,
+    -- the offset will be its negation in case decoding error.
     --
     decodeChar :: p a
                -> Addr#  -- current chunk address
                -> Int#   -- current chunk length
-               -> Addr#  -- next chunk address
-               -> Int#   -- decoding index
+               -> Addr#  -- next chunk address, 'nullAddr#' if not exist
+               -> Int#   -- current index
                -> (# Char#, Int# #)
 
     -- | poke 'Char' using 'BoundedPrim'.
@@ -46,62 +47,58 @@ data UTF8
 instance TextualEncoding UTF8 where
     {-# INLINEABLE decodeChar #-}
     decodeChar _ addr len next idx =
-        -- bound check
-        case idx <# len of
-            0# -> (# '\0'#, -1# #)
-            1# ->
-                let !x1  = indexWord8OffAddr# addr idx
-                    !(Table utf8HeadTable#) = utf8HeadTable
-                    !c = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
-                in case c of
-                    0xFF# -> (# '\0'#, 0# #)
-                    _ ->
-                        -- next bound check
-                        let !cnt = case (c +# idx) <# len of
-                                1# -> c
-                                0# -> case next `eqAddr#` nullAddr# of
-                                    0# -> 0xFF#
-                                    1# -> len -# idx -# c
-                        in case cnt of
-                            0# -> (# chr# (word2Int# x1), 1# #)
-                            1# ->
-                                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                                in if utf8_validate2 x1 x2
-                                    then (# utf8_chr2 x1 x2, 2# #)
-                                    else (# '\0'#, 0# #)
-                            2# ->
-                                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
-                                in if utf8_validate3 x1 x2 x3
-                                    then (# utf8_chr3 x1 x2 x3, 3# #)
-                                    else (# '\0'#, 0# #)
-                            3# ->
-                                let !x2 = indexWord8OffAddr# addr (idx +# 1#)
-                                    !x3 = indexWord8OffAddr# addr (idx +# 2#)
-                                    !x4 = indexWord8OffAddr# addr (idx +# 3#)
-                                in if utf8_validate4 x1 x2 x3 x4
-                                    then (# utf8_chr4 x1 x2 x3 x4, 4# #)
-                                    else (# '\0'#, 0# #)
-                            0# ->
-                                let !x2 = indexWord8OffAddr# next 0#
-                                in if utf8_validate2 x1 x2
-                                    then (# utf8_chr2 x1 x2, 2# #)
-                                    else (# '\0'#, 0# #)
-                            -1# ->
-                                let !x2 = indexWord8OffAddr# next 1#
-                                    !x3 = indexWord8OffAddr# next 2#
-                                in if utf8_validate3 x1 x2 x3
-                                    then (# utf8_chr3 x1 x2 x3, 3# #)
-                                    else (# '\0'#, 0# #)
-                            -2# ->
-                                let !x2 = indexWord8OffAddr# next 0#
-                                    !x3 = indexWord8OffAddr# next 1#
-                                    !x4 = indexWord8OffAddr# next 2#
-                                in if utf8_validate4 x1 x2 x3 x4
-                                    then (# utf8_chr4 x1 x2 x3 x4, 4# #)
-                                    else (# '\0'#, 0# #)
+        let !x1  = indexWord8OffAddr# addr idx
+            !(Table utf8HeadTable#) = utf8HeadTable
+            !c = indexInt8OffAddr# utf8HeadTable# (word2Int# x1)
+        in case c of
+            0xFF# -> (# '\0'#, -1# #)
+            _ ->
+                -- next bound check
+                let !cnt = case (c +# idx) <# len of
+                        1# -> c
+                        0# -> case next `eqAddr#` nullAddr# of
+                            0# -> 0xFF#
+                            1# -> len -# idx -# c -# 1#
+                in case cnt of
+                    0# -> (# chr# (word2Int# x1), 1# #)
+                    1# ->
+                        let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                        in if utf8_validate2 x1 x2
+                            then (# utf8_chr2 x1 x2, 2# #)
+                            else (# '\0'#, -2# #)
+                    2# ->
+                        let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                            !x3 = indexWord8OffAddr# addr (idx +# 2#)
+                        in if utf8_validate3 x1 x2 x3
+                            then (# utf8_chr3 x1 x2 x3, 3# #)
+                            else (# '\0'#, -3# #)
+                    3# ->
+                        let !x2 = indexWord8OffAddr# addr (idx +# 1#)
+                            !x3 = indexWord8OffAddr# addr (idx +# 2#)
+                            !x4 = indexWord8OffAddr# addr (idx +# 3#)
+                        in if utf8_validate4 x1 x2 x3 x4
+                            then (# utf8_chr4 x1 x2 x3 x4, 4# #)
+                            else (# '\0'#, -4# #)
+                    -1# ->
+                        let !x2 = indexWord8OffAddr# next 0#
+                        in if utf8_validate2 x1 x2
+                            then (# utf8_chr2 x1 x2, 2# #)
+                            else (# '\0'#, -2# #)
+                    -2# ->
+                        let !x2 = indexWord8OffAddr# next 1#
+                            !x3 = indexWord8OffAddr# next 2#
+                        in if utf8_validate3 x1 x2 x3
+                            then (# utf8_chr3 x1 x2 x3, 3# #)
+                            else (# '\0'#, -3# #)
+                    -3# ->
+                        let !x2 = indexWord8OffAddr# next 0#
+                            !x3 = indexWord8OffAddr# next 1#
+                            !x4 = indexWord8OffAddr# next 2#
+                        in if utf8_validate4 x1 x2 x3 x4
+                            then (# utf8_chr4 x1 x2 x3 x4, 4# #)
+                            else (# '\0'#, -4# #)
 
-                            0xFF# -> (# '\0'#, -2# #)
+                    _ -> (# '\0'#, -1# #)
 
     {-# INLINEABLE encodeChar #-}
     encodeChar _ = charUtf8

@@ -83,12 +83,13 @@ decodeInternal thw tbs = go 0#
   where
     !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
     dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
-    go i =
-        let (# chr, l #) = dec i
-        in case l of
-            0# -> if thw then error $
-                            "Data.TextualBytes.decodeInternal: can't decode byte at " ++ show (I# i)
-                         else '\xfffd' : go (i +# 1#)
-            -1# -> [C# chr]
-            _ -> C# chr : go (i +# l)
+    go i = case i <# len of
+        1# ->
+            let (# chr, l #) = dec i
+            in case l <# 0# of
+                0# -> C# chr : go (i +# l)
+                1# -> if thw then error $
+                                "Data.TextualBytes.decodeInternal: can't decode byte at " ++ show (I# i)
+                             else '\xfffd' : go (i -# l)
+        0# -> []
 {-# INLINE decodeInternal #-}
