@@ -8,7 +8,6 @@
 module Data.TextualBytes
     ( -- * ByteString tagged with encodings.
       TextualBytes(..)
-    , decodeThrow
     , decodeLenient
     , validate
     , encode
@@ -48,14 +47,13 @@ validate tbs = I# (go 0# 0#)
   where
     !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
     dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
-    go i acc =
-        let !(# _, l #) = dec i
-            i' = i +# l
-        in case i' <# len of
-            1# -> case l of
-                0# -> 0#
-                _ -> go i' (1# +# acc)
-            0# -> acc
+    go i acc = case i <# len of
+        1# ->
+            let (# chr, l #) = dec i
+            in case l <# 0# of
+                0# -> go (i +# l) (acc +# 1#)
+                1# -> -1#
+        0# -> acc
 {-# INLINE validate #-}
 
 decodeLenient :: TextualEncoding a => TextualBytes a -> String

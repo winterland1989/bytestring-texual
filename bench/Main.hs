@@ -26,7 +26,6 @@ main = do
                 (TB.TextualBytes bs)
 
             ]
-        {-
         , bgroup "map utf-8"
             [ bench "text" $ nf (T.length . T.map toUpper . T.decodeUtf8) bs
             , bench "texualBytes" $ nf (sum . map fromEnum . TB.decodeLenient) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
@@ -36,5 +35,4 @@ main = do
             [ bench "text" $ nf (T.length . T.decodeUtf8) bs
             , bench "texualBytes" $ nf (TB.validate) (TB.TextualBytes bs :: TB.TextualBytes TB.UTF8)
             ]
-        -}
         ]

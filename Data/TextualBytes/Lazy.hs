@@ -1,43 +1,94 @@
-module Data.ByteString.Textual.Lazy where
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveGeneric #-}
 
-import Data.ByteString.Builder (Builder, lazyByteString)
-import Data.ByteString.Textual (Encoding(..), ASCII, UTF8, UTF16LE, UTF16BE, UTF32LE, UTF32BE)
-import Data.ByteString.Lazy (ByteString)
-import Data.Text.Lazy (Text)
-import Data.Text.Internal.Lazy.Encoding.Fusion
-import Data.Text.Encoding.Error
-import qualified Data.Text.Lazy.Encoding as T
-import Data.Text.Internal.Fusion.Types (Stream)
-import qualified Data.Text.Internal.Lazy.Fusion as F
+module Data.TextualBytes.Lazy
+    ( -- * ByteString tagged with encodings.
+      TextualBytes(..)
+    , decodeThrow
+    , decodeLenient
+    , validate
+    , encode
+      -- * Encodings
+    , TextualEncoding(..)
+    , ASCII
+    , UTF8
+    ) where
+
+import Control.DeepSeq
+import Data.Data
+import Data.Typeable
+import GHC.Generics
+import Data.ByteString (ByteString)
+import Data.ByteString.Lazy (toStrict)
+import Data.ByteString.Builder
+import Data.ByteString.Builder.Prim
+import Data.ByteString.Internal (ByteString(..))
+import Data.ByteString.Builder (Builder, byteString)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 import Control.Exception (try, evaluate)
+import GHC.Exts (build)
+import GHC.Prim
+import GHC.Types
+import GHC.ForeignPtr (ForeignPtr(..))
+import Data.Proxy
+
+import Data.TextualBytes.Encoding
 
 newtype TextualBytes a = TextualBytes { getBytes :: ByteString }
+    deriving (Eq, Ord, Read, Show, Data, Typeable, Generic)
 
-type ASCIIBytes   = TextualBytes ASCII
-type UTF8Bytes    = TextualBytes UTF8
-type UTF16LEBytes = TextualBytes UTF16LE
-type UTF16BEBytes = TextualBytes UTF16BE
-type UTF32LEBytes = TextualBytes UTF32LE
-type UTF32BEBytes = TextualBytes UTF32BE
+instance NFData (TextualBytes a)
 
-toTextLenient :: Encoding a => TextualBytes a -> Text
-toTextLenient tbs = toText lenientDecode tbs
-{-# INLINE toTextLenient #-}
+validate :: TextualEncoding a => TextualBytes a -> Int
+validate tbs = I# (go 0# 0#)
+  where
+    !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
+    dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
+    go i acc = case i <# len of
+        1# ->
+            let (# _, l #) = dec i
+            in case l <# 0# of
+                0# -> go (i +# l) (acc +# 1#)
+                1# -> -1#
+        0# -> acc
+{-# INLINE validate #-}
 
-toTextStrict :: Encoding a => TextualBytes a -> Either UnicodeException Text
-toTextStrict tbs = unsafeDupablePerformIO . try . evaluate $ toText strictDecode tbs
-{-# INLINE toTextStrict #-}
+decodeLenient :: TextualEncoding a => TextualBytes a -> String
+decodeLenient = decodeInternal False
 
-toText :: Encoding a => OnDecodeError -> TextualBytes a -> Text
-toText onErr tbs = F.unstream (streamDecodeLazy tbs onErr (getBytes tbs))
-{-# INLINE [1] toText #-}
+decodeThrow :: TextualEncoding a => TextualBytes a -> String
+decodeThrow = decodeInternal True
 
--- Use fast c utf8 decoder if possible
-{-# RULES "toText/UTF8" [2] toText = toTextUTF8 #-}
-toTextUTF8 :: OnDecodeError -> TextualBytes UTF8 -> Text
-toTextUTF8 onErr (TextualBytes lbs) = T.decodeUtf8With onErr lbs
+encode :: forall e. TextualEncoding e => String -> TextualBytes e
+encode cs =
+    let lbs = toLazyByteString $ primMapListBounded (encodeChar (Proxy :: Proxy e)) cs
+    in TextualBytes (toStrict lbs)
+{-# INLINE encode #-}
 
-toBuilder :: TextualBytes a -> Builder
-toBuilder (TextualBytes lbs) = lazyByteString lbs
-{-# INLINE toBuilder #-}
+{-
+transcode :: (forall e1. TextualEncoding e1, TextualEncoding e2)
+          => TextualBytes e1 -> TextualBytes e2
+transcode t1 t2 =
+-}
+
+--------------------------------------------------------------------------------
+
+decodeInternal :: TextualEncoding a => Bool -> TextualBytes a -> String
+decodeInternal thw tbs = go 0#
+  where
+    !(PS (ForeignPtr addr _) (I# off) (I# len)) = getBytes tbs
+    dec = decodeChar tbs (addr `plusAddr#` off) len nullAddr#
+    go i = case i <# len of
+        1# ->
+            let (# chr, l #) = dec i
+            in case l <# 0# of
+                0# -> chr : go (i +# l)
+                1# -> if thw then error $
+                                "Data.TextualBytes.decodeInternal: can't decode byte at " ++ show (I# i)
+                             else '\xfffd' : go (i -# l)
+        0# -> []
+{-# INLINE decodeInternal #-}

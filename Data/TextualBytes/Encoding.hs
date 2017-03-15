@@ -11,9 +11,13 @@ import Data.ByteString.Builder.Prim
 -- | A type class for texual decode/encode.
 --
 class TextualEncoding a where
-    -- | peek a 'Char#' from given 'Addr#' and index, return both the 'Char#'
+
+    -- | Is this a fixed width encoding?
+    isFixedEncoding :: p a -> Bool
+
+    -- | Peek a 'Char#' from given 'Addr#' and index, return both the 'Char#'
     -- and the advance offset in bytes on successful decoding,
-    -- the offset will be its negation in case decoding error.
+    -- the offset will be its negation in case of decoding error.
     --
     decodeChar :: p a
                -> Addr#  -- current chunk address
@@ -22,7 +26,7 @@ class TextualEncoding a where
                -> Int#   -- current index
                -> (# Char#, Int# #)
 
-    -- | poke 'Char' using 'BoundedPrim'.
+    -- | Poke 'Char' using 'BoundedPrim'.
     --
     -- NOTE: Some encodings(ASCII for example) can't encode full range of a 'Char',
     -- truncate if that happens.
